@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Jira Backlog Cards</title>
+<style>
+  :root {
+    --card-border: #2b2b2b;
+    --ink: #1a1a1a;
+    --muted: #555;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    margin: 0;
+    background: #f4f4f4;
+    color: var(--ink);
+  }
+
+  /* --- Controls bar (hidden when printing) --- */
+  .controls {
+    background: #fff;
+    border-bottom: 1px solid #ddd;
+    padding: 12px 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  }
+  .controls h1 {
+    font-size: 16px;
+    margin: 0 16px 0 0;
+    font-weight: 600;
+  }
+  .controls label.file-btn {
+    background: #0052cc;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .controls label.file-btn:hover { background: #003d99; }
+  .controls input[type=file] { display: none; }
+  .controls button {
+    background: #fff;
+    border: 1px solid #ccc;
+    padding: 8px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .controls button:hover { background: #f0f0f0; }
+  .controls .status {
+    font-size: 13px;
+    color: var(--muted);
+    margin-left: auto;
+  }
+  .controls .opt {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+  }
+  .controls select {
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+
+  /* --- Page layout: each .sheet = one A4 page --- */
+  .pages {
+    padding: 20px;
+  }
+  .sheet {
+    width: 297mm;
+    height: 210mm;
+    padding: 10mm;
+    margin: 0 auto 20px;
+    background: white;
+    box-shadow: 0 2px 8px rgba(0,0,0,.15);
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: 4mm;
+    page-break-after: always;
+    align-content: start;
+  }
+  .sheet:last-child { page-break-after: auto; }
+  /* When "Trim height" is enabled, rows shrink to content */
+  .sheet.trim {
+    grid-auto-rows: min-content;
+    height: auto;
+    min-height: 210mm;
+  }
+
+  /* --- Card design matching the template --- */
+  .card {
+    border: 1px solid var(--card-border);
+    padding: 3mm;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5mm;
+    font-size: 9.5pt;
+    line-height: 1.25;
+    overflow: hidden;
+    background: white;
+    cursor: pointer;
+    position: relative;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    transition: background-color .15s ease;
+  }
+  .card:hover {
+    outline: 2px solid #0052cc;
+    outline-offset: -1px;
+  }
+  .card[data-color="green"] { background: #c8eac0; }
+  .card[data-color="pink"]  { background: #f8c8d8; }
+  .card[data-color="custom"] { background: var(--custom-bg, white); }
+  .card .row-header {
+    font-weight: bold;
+    padding-bottom: 1.5mm;
+    border-bottom: 1px solid var(--card-border);
+    display: flex;
+    gap: 2mm;
+    align-items: baseline;
+  }
+  .card .row-header .key {
+    white-space: nowrap;
+    font-size: 10pt;
+  }
+  .card .row-header .summary {
+    flex: 1;
+    font-size: 9pt;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .card .row-parent {
+    padding-bottom: 1.5mm;
+    border-bottom: 1px solid var(--card-border);
+    font-size: 8.5pt;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .card .row-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2mm;
+    padding-bottom: 1.5mm;
+    border-bottom: 1px solid var(--card-border);
+    font-size: 8.5pt;
+  }
+  .card .row-grid.last {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+  .card .cell-label {
+    font-weight: bold;
+  }
+  .empty-card {
+    border: 1px dashed #ccc;
+    cursor: default;
+    pointer-events: none;
+  }
+
+  /* --- Color picker popover --- */
+  .color-popover {
+    position: absolute;
+    background: white;
+    border: 1px solid #999;
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.2);
+    padding: 8px;
+    display: none;
+    gap: 6px;
+    align-items: center;
+    z-index: 200;
+  }
+  .color-popover.open { display: flex; }
+  .color-popover .swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid #888;
+    cursor: pointer;
+    padding: 0;
+  }
+  .color-popover .swatch.green { background: #c8eac0; }
+  .color-popover .swatch.pink  { background: #f8c8d8; }
+  .color-popover .swatch.clear {
+    background: white;
+    position: relative;
+  }
+  .color-popover .swatch.clear::after {
+    content: '';
+    position: absolute;
+    top: 50%; left: 10%; right: 10%;
+    height: 2px;
+    background: #c33;
+    transform: rotate(-45deg);
+  }
+  .color-popover input[type=color] {
+    width: 32px;
+    height: 32px;
+    border: 1px solid #888;
+    border-radius: 50%;
+    padding: 0;
+    cursor: pointer;
+    background: none;
+  }
+  .color-popover input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+  .color-popover input[type=color]::-webkit-color-swatch { border: none; border-radius: 50%; }
+
+  /* Empty state */
+  .empty-state {
+    max-width: 600px;
+    margin: 40px auto;
+    text-align: center;
+    background: white;
+    padding: 40px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.1);
+  }
+  .empty-state h2 { margin-top: 0; }
+  .empty-state p { color: var(--muted); line-height: 1.5; }
+
+  /* --- Print rules --- */
+  @page {
+    size: A4 landscape;
+    margin: 0;
+  }
+  @media print {
+    body { background: white; }
+    .controls { display: none; }
+    .pages { padding: 0; }
+    .sheet {
+      box-shadow: none;
+      margin: 0;
+      page-break-after: always;
+    }
+    .empty-state { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <h1>Jira Backlog Cards</h1>
+  <label class="file-btn">
+    Choose CSV file
+    <input type="file" id="csvInput" accept=".csv,text/csv">
+  </label>
+  <div class="opt">
+    <label for="perPage">Cards/page:</label>
+    <select id="perPage">
+      <option value="6">6 (3×2)</option>
+      <option value="8">8 (4×2)</option>
+      <option value="9" selected>9 (3×3)</option>
+      <option value="12">12 (4×3)</option>
+      <option value="15">15 (5×3)</option>
+    </select>
+  </div>
+  <div class="opt">
+    <label><input type="checkbox" id="trimToggle"> Trim card height</label>
+  </div>
+  <button id="clearColorsBtn" disabled>Clear colors</button>
+  <button id="printBtn" disabled>Print</button>
+  <span class="status" id="status">No file loaded</span>
+</div>
+
+<div class="color-popover" id="colorPopover">
+  <button class="swatch green" data-action="green" title="Green"></button>
+  <button class="swatch pink" data-action="pink" title="Pink"></button>
+  <input type="color" id="customColor" title="Custom color" value="#ffd966">
+  <button class="swatch clear" data-action="clear" title="Clear"></button>
+</div>
+
+<div class="pages" id="pages">
+  <div class="empty-state" id="emptyState">
+    <h2>Upload a Jira CSV export</h2>
+    <p>Each row becomes a printable card matching your template. Cards are arranged on A4 pages ready to print and cut out.</p>
+    <p>Expected columns: <em>Summary, Issue key, Priority, Assignee, Custom field (Story Points), Team Name, Parent key, Parent summary</em>.</p>
+  </div>
+</div>
+
+<script>
+// ------------- CSV parser (handles quoted fields, embedded newlines, escaped quotes) -------------
+function parseCSV(text) {
+  // Strip BOM
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  let i = 0;
+  const len = text.length;
+
+  while (i < len) {
+    const c = text[i];
+
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQuotes = false; i++; continue;
+      }
+      field += c; i++; continue;
+    }
+
+    if (c === '"') { inQuotes = true; i++; continue; }
+    if (c === ',') { row.push(field); field = ''; i++; continue; }
+    if (c === '\r') { i++; continue; }
+    if (c === '\n') {
+      row.push(field); field = '';
+      rows.push(row); row = [];
+      i++; continue;
+    }
+    field += c; i++;
+  }
+  // flush last field
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+// ------------- Map header row to column indices -------------
+// Jira CSV uses repeated column names (Labels, Watchers, Comment, etc.).
+// For our 8 target fields, exact match on the first occurrence is fine.
+function buildColumnMap(headers) {
+  const targets = {
+    summary: 'Summary',
+    issueKey: 'Issue key',
+    priority: 'Priority',
+    assignee: 'Assignee',
+    storyPoints: 'Custom field (Story Points)',
+    teamName: 'Team Name',
+    parentKey: 'Parent key',
+    parentSummary: 'Parent summary'
+  };
+  const map = {};
+  for (const [field, header] of Object.entries(targets)) {
+    map[field] = headers.findIndex(h => h.trim() === header);
+  }
+  return map;
+}
+
+function esc(s) {
+  if (s === undefined || s === null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// ------------- Render cards into A4 sheets -------------
+function renderCards(rows) {
+  const pages = document.getElementById('pages');
+  pages.innerHTML = '';
+
+  if (!rows || rows.length < 2) {
+    pages.innerHTML = '<div class="empty-state"><h2>No data rows found</h2><p>The file appears to be empty or only contains a header.</p></div>';
+    return;
+  }
+
+  const headers = rows[0];
+  const data = rows.slice(1).filter(r => r.some(c => c && c.trim() !== ''));
+  const cm = buildColumnMap(headers);
+
+  const perPage = parseInt(document.getElementById('perPage').value, 10);
+  const trim = document.getElementById('trimToggle').checked;
+  const gridConfig = {
+    6:  { cols: 3, rows: 2 },
+    8:  { cols: 4, rows: 2 },
+    9:  { cols: 3, rows: 3 },
+    12: { cols: 4, rows: 3 },
+    15: { cols: 5, rows: 3 }
+  }[perPage];
+
+  const totalPages = Math.ceil(data.length / perPage);
+  const status = document.getElementById('status');
+  status.textContent = `${data.length} cards across ${totalPages} page${totalPages !== 1 ? 's' : ''}`;
+
+  for (let p = 0; p < totalPages; p++) {
+    const sheet = document.createElement('div');
+    sheet.className = 'sheet' + (trim ? ' trim' : '');
+    sheet.style.gridTemplateColumns = `repeat(${gridConfig.cols}, 1fr)`;
+    sheet.style.gridTemplateRows = trim ? 'none' : `repeat(${gridConfig.rows}, 1fr)`;
+
+    for (let s = 0; s < perPage; s++) {
+      const idx = p * perPage + s;
+      if (idx >= data.length) {
+        const empty = document.createElement('div');
+        empty.className = 'card empty-card';
+        sheet.appendChild(empty);
+        continue;
+      }
+      const r = data[idx];
+      const get = (key) => cm[key] >= 0 ? (r[cm[key]] || '').trim() : '';
+
+      const issueKey = get('issueKey');
+      const summary = get('summary');
+      const parentKey = get('parentKey');
+      const parentSummary = get('parentSummary');
+      const storyPoints = get('storyPoints');
+      const priority = get('priority');
+      const assignee = get('assignee');
+      const teamName = get('teamName');
+
+      const parentLine = (parentKey || parentSummary)
+        ? `${esc(parentKey)}${parentKey && parentSummary ? ' ' : ''}${esc(parentSummary)}`
+        : '<span style="color:#999"></span>';
+
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `
+        <div class="row-header">
+          <span class="key">${esc(issueKey)}</span>
+          <span class="summary">${esc(summary)}</span>
+        </div>
+        <div class="row-parent">
+          <span class="cell-label">Parent:</span> ${parentLine}
+        </div>
+        <div class="row-grid">
+          <div><span class="cell-label">Story Point:</span><br>${esc(storyPoints) || '&nbsp;'}</div>
+          <div><span class="cell-label">Priority:</span> ${esc(priority) || '&nbsp;'}</div>
+        </div>
+        <div class="row-grid last">
+          <div><span class="cell-label">Assignee:</span> ${esc(assignee) || '&nbsp;'}</div>
+          <div><span class="cell-label">Team:</span> ${esc(teamName) || '&nbsp;'}</div>
+        </div>
+      `;
+      sheet.appendChild(card);
+    }
+    pages.appendChild(sheet);
+  }
+
+  document.getElementById('printBtn').disabled = false;
+  document.getElementById('clearColorsBtn').disabled = false;
+}
+
+// ------------- Card coloring (click → popover) -------------
+const popover = document.getElementById('colorPopover');
+const customColorInput = document.getElementById('customColor');
+let activeCard = null;
+
+function positionPopover(card) {
+  const rect = card.getBoundingClientRect();
+  popover.style.left = (window.scrollX + rect.left + rect.width / 2 - popover.offsetWidth / 2) + 'px';
+  popover.style.top  = (window.scrollY + rect.top + 6) + 'px';
+}
+
+function openPopover(card) {
+  activeCard = card;
+  popover.classList.add('open');
+  // measure after display so offsetWidth is correct
+  requestAnimationFrame(() => positionPopover(card));
+}
+
+function closePopover() {
+  popover.classList.remove('open');
+  activeCard = null;
+}
+
+function applyColor(card, action, customHex) {
+  if (action === 'clear') {
+    card.removeAttribute('data-color');
+    card.style.removeProperty('--custom-bg');
+  } else if (action === 'custom') {
+    card.setAttribute('data-color', 'custom');
+    card.style.setProperty('--custom-bg', customHex);
+  } else {
+    card.setAttribute('data-color', action);
+    card.style.removeProperty('--custom-bg');
+  }
+}
+
+// Click on a card → open popover
+document.getElementById('pages').addEventListener('click', (e) => {
+  const card = e.target.closest('.card');
+  if (!card || card.classList.contains('empty-card')) return;
+  if (card === activeCard) { closePopover(); return; }
+  openPopover(card);
+});
+
+// Popover swatch clicks
+popover.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn || !activeCard) return;
+  applyColor(activeCard, btn.dataset.action);
+  closePopover();
+});
+
+// Custom color picker
+customColorInput.addEventListener('input', (e) => {
+  if (!activeCard) return;
+  applyColor(activeCard, 'custom', e.target.value);
+});
+customColorInput.addEventListener('change', () => closePopover());
+
+// Click outside closes popover
+document.addEventListener('click', (e) => {
+  if (!activeCard) return;
+  if (popover.contains(e.target)) return;
+  if (e.target.closest('.card') === activeCard) return;
+  closePopover();
+});
+
+// Escape closes popover
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closePopover();
+});
+
+// Reposition on scroll/resize while open
+window.addEventListener('scroll', () => { if (activeCard) positionPopover(activeCard); }, true);
+window.addEventListener('resize', () => { if (activeCard) positionPopover(activeCard); });
+
+// Clear all colors
+document.getElementById('clearColorsBtn').addEventListener('click', () => {
+  document.querySelectorAll('.card[data-color]').forEach(c => {
+    c.removeAttribute('data-color');
+    c.style.removeProperty('--custom-bg');
+  });
+  closePopover();
+});
+
+// ------------- Wire up UI -------------
+let lastRows = null;
+
+document.getElementById('csvInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      lastRows = parseCSV(ev.target.result);
+      renderCards(lastRows);
+    } catch (err) {
+      document.getElementById('status').textContent = 'Error parsing CSV: ' + err.message;
+    }
+  };
+  reader.readAsText(file);
+});
+
+document.getElementById('perPage').addEventListener('change', () => {
+  if (lastRows) renderCards(lastRows);
+});
+
+document.getElementById('trimToggle').addEventListener('change', () => {
+  if (lastRows) renderCards(lastRows);
+});
+
+document.getElementById('printBtn').addEventListener('click', () => {
+  window.print();
+});
+</script>
+
+</body>
+</html>
